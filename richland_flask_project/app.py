@@ -5,8 +5,9 @@
 # --- Core Imports ---
 import os
 import csv
+import math
 from io import BytesIO, StringIO
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 from flask import (Flask, render_template, request, redirect, url_for, flash, Response, jsonify)
 from dotenv import load_dotenv
@@ -30,7 +31,8 @@ from forms import (
     ProductFilterForm, TransactionFilterForm, SupplierForm, PurchaseOrderForm,
     ProductHistoryFilterForm, SalesReportForm, POFilterForm,
     UserRegistrationForm,
-    CategoryForm # ADDED (Assuming CategoryForm is now in forms.py)
+    CategoryForm,
+    AnalyticsFilterForm # ADDED (Assuming CategoryForm is now in forms.py)
 )
 
 # ==============================================================================
@@ -83,6 +85,17 @@ def intcomma_filter(value):
         return "{:,.0f}".format(float(value))
     except (ValueError, TypeError):
         return value
+    
+@app.template_filter('dict_exclude')
+def dict_exclude_filter(d, key):
+    """
+    Helper to remove specific keys from a dictionary. 
+    Used in pagination to remove the old 'page' param while keeping search filters.
+    """
+    new_d = d.copy()
+    if key in new_d:
+        del new_d[key]
+    return new_d
 
 # ==============================================================================
 # Authentication Routes
@@ -155,6 +168,10 @@ def product_list():
     # [FIX] Disable CSRF for GET forms so validation passes
     form = ProductFilterForm(request.args, meta={'csrf': False})
     
+    # --- 1. SETUP PAGINATION ---
+    page = request.args.get('page', 1, type=int)
+    per_page = 12  # 12 looks better in grids (3x4 or 4x3) than 10
+    
     query = {}
     sort_by = request.args.get('sort_by', '-date_created')
 
@@ -172,8 +189,27 @@ def product_list():
             query['category_name'] = form.category.data
             
     sort_field, sort_order = (sort_by[1:], -1) if sort_by.startswith('-') else (sort_by, 1)
-    products = list(products_collection.find(query).sort(sort_field, sort_order))
-    return render_template('inventory/product_list.html', product_list=products, filter_form=form)
+
+    # --- 2. COUNT TOTAL ITEMS (For Pagination) ---
+    total_products = products_collection.count_documents(query)
+    total_pages = math.ceil(total_products / per_page)
+    
+    # --- 3. FETCH ONLY THE SLICE NEEDED ---
+    skip_amount = (page - 1) * per_page
+    
+    products = list(products_collection.find(query)
+                    .sort(sort_field, sort_order)
+                    .skip(skip_amount)
+                    .limit(per_page))
+
+    # --- 4. PASS PAGINATION DATA TO TEMPLATE ---
+    return render_template(
+        'inventory/product_list.html', 
+        product_list=products, 
+        filter_form=form,
+        current_page=page,
+        total_pages=total_pages
+    )
 
 @app.route('/search/products')
 @login_required
@@ -415,16 +451,95 @@ def product_history_list():
 @app.route('/transactions')
 @login_required
 def transaction_list():
-    # [FIX] Disable CSRF for GET forms
+    # 1. Get Filter Data (Disable CSRF for GET requests)
     form = TransactionFilterForm(request.args, meta={'csrf': False})
-    query = {}
+    
+    # 2. Pagination Setup
+    page = request.args.get('page', 1, type=int)
+    per_page = 20
+    skip_amount = (page - 1) * per_page
+    
+    # 3. Build the Match Query (Filters)
+    match_stage = {}
+    
     if form.validate():
+        # Date Filter
+        if form.start_date.data and form.end_date.data:
+            match_stage['sale_date'] = {
+                '$gte': datetime.combine(form.start_date.data, datetime.min.time()),
+                '$lte': datetime.combine(form.end_date.data, datetime.max.time())
+            }
+        
+        # User Filter
+        if form.user.data:
+            match_stage['user_username'] = {'$regex': form.user.data, '$options': 'i'}
+
+        # Product/Type Pre-filter (Check if array contains these values before unwinding)
         if form.product.data:
-            query['items_sold.product_sku'] = form.product.data
+            match_stage['items_sold'] = {
+                '$elemMatch': {
+                    '$or': [
+                        {'product_sku': {'$regex': form.product.data, '$options': 'i'}},
+                        {'product_name': {'$regex': form.product.data, '$options': 'i'}}
+                    ]
+                }
+            }
         if form.transaction_type.data:
-            query['items_sold.type'] = form.transaction_type.data
-    transactions = list(sales_collection.find(query).sort("sale_date", -1))
-    return render_template('inventory/transaction_list.html', transaction_list=transactions, filter_form=form)
+             match_stage['items_sold.type'] = form.transaction_type.data
+
+    # 4. Aggregation Pipeline
+    pipeline = [
+        {'$match': match_stage},          # Filter main documents
+        {'$unwind': '$items_sold'},       # FLATTEN: 1 Sale w/ 3 Items -> 3 Rows
+        {'$sort': {'sale_date': -1}},     # Sort by newest
+    ]
+
+    # 5. Apply Strict Filters to the FLATTENED items
+    # (This ensures if we search for "Item A", we don't see "Item B" just because they were in the same cart)
+    unwind_match = {}
+    if form.product.data:
+        unwind_match['$or'] = [
+            {'items_sold.product_sku': {'$regex': form.product.data, '$options': 'i'}},
+            {'items_sold.product_name': {'$regex': form.product.data, '$options': 'i'}}
+        ]
+    if form.transaction_type.data:
+        unwind_match['items_sold.type'] = form.transaction_type.data
+        
+    if unwind_match:
+        pipeline.append({'$match': unwind_match})
+
+    # 6. Pagination (Count Total vs Fetch Data)
+    count_pipeline = pipeline[:] + [{'$count': 'total'}]
+    
+    data_pipeline = pipeline[:] + [
+        {'$skip': skip_amount},
+        {'$limit': per_page},
+        # Project fields to top level for easy HTML access
+        {'$project': {
+            'sale_date': 1,
+            'user_username': 1,
+            'product_sku': '$items_sold.product_sku',
+            'product_name': '$items_sold.product_name',
+            'quantity_sold': '$items_sold.quantity_sold',
+            'type': '$items_sold.type',
+            'notes': '$items_sold.notes'
+        }}
+    ]
+
+    # Execute Queries
+    count_result = list(sales_collection.aggregate(count_pipeline))
+    total_items = count_result[0]['total'] if count_result else 0
+    total_pages = math.ceil(total_items / per_page)
+
+    transactions = list(sales_collection.aggregate(data_pipeline))
+
+    return render_template(
+        'inventory/transaction_list.html', 
+        transaction_list=transactions, 
+        filter_form=form,
+        current_page=page,
+        total_pages=total_pages
+    )
 
 @app.route('/reports')
 @login_required
@@ -491,9 +606,73 @@ def export_sales_pdf():
 @login_required
 @role_required('Owner', 'Admin')
 def analytics_dashboard():
-    pipeline = [
+    # 1. Date Filtering
+    form = AnalyticsFilterForm(request.args, meta={'csrf': False})
+    
+    # Default: Last 30 Days
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=30)
+
+    if form.validate():
+        if form.start_date.data:
+            start_date = datetime.combine(form.start_date.data, datetime.min.time())
+        if form.end_date.data:
+            end_date = datetime.combine(form.end_date.data, datetime.max.time())
+
+    # 2. Base Pipeline (Filter by Date & Unwind Items)
+    # We use this base for all subsequent calculations to ensure consistency
+    base_match = {
+        "sale_date": {"$gte": start_date, "$lte": end_date}
+    }
+
+    # --- A. CALCULATE KPIs ---
+    
+    # Gross Sales (Type OUT, excluding Damage)
+    sales_pipeline = [
+        {"$match": base_match},
         {"$unwind": "$items_sold"},
-        {"$match": {"items_sold.type": "OUT"}},
+        {"$match": {"items_sold.type": "OUT", "items_sold.notes": {"$not": {"$regex": "Damage", "$options": "i"}}}},
+        {"$group": {
+            "_id": None, 
+            "revenue": {"$sum": {"$multiply": ["$items_sold.quantity_sold", "$items_sold.price_per_unit"]}},
+            "units": {"$sum": "$items_sold.quantity_sold"}
+        }}
+    ]
+    sales_res = list(sales_collection.aggregate(sales_pipeline))
+    gross_sales = sales_res[0]['revenue'] if sales_res else 0
+    total_units = sales_res[0]['units'] if sales_res else 0
+
+    # Refunds (Type IN, Notes contain "Return" or "Refund")
+    refund_pipeline = [
+        {"$match": base_match},
+        {"$unwind": "$items_sold"},
+        {"$match": {"items_sold.type": "IN", "items_sold.notes": {"$regex": "Return|Refund", "$options": "i"}}},
+        {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$items_sold.quantity_sold", "$items_sold.price_per_unit"]}}}}
+    ]
+    refund_res = list(sales_collection.aggregate(refund_pipeline))
+    total_refunds = refund_res[0]['total'] if refund_res else 0
+
+    # Loss/Damage (Type OUT, Notes contain "Damage")
+    loss_pipeline = [
+        {"$match": base_match},
+        {"$unwind": "$items_sold"},
+        {"$match": {"items_sold.type": "OUT", "items_sold.notes": {"$regex": "Damage", "$options": "i"}}},
+        {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$items_sold.quantity_sold", "$items_sold.price_per_unit"]}}}}
+    ]
+    loss_res = list(sales_collection.aggregate(loss_pipeline))
+    total_loss = loss_res[0]['total'] if loss_res else 0
+
+    # Net Revenue
+    net_revenue = gross_sales - total_refunds
+
+    # --- B. CHARTS DATA ---
+
+    # 1. Sales by Category (Doughnut Chart)
+    # Join with Products collection to get Category Name
+    cat_pipeline = [
+        {"$match": base_match},
+        {"$unwind": "$items_sold"},
+        {"$match": {"items_sold.type": "OUT", "items_sold.notes": {"$not": {"$regex": "Damage"}}}},
         {"$lookup": {
             "from": "products",
             "localField": "items_sold.product_sku",
@@ -503,15 +682,74 @@ def analytics_dashboard():
         {"$unwind": "$product_info"},
         {"$group": {
             "_id": "$product_info.category_name",
-            "total_revenue": {"$sum": {"$multiply": ["$items_sold.quantity_sold", "$items_sold.price_per_unit"]}},
-            "units_sold": {"$sum": "$items_sold.quantity_sold"}
+            "total": {"$sum": {"$multiply": ["$items_sold.quantity_sold", "$items_sold.price_per_unit"]}}
         }},
-        {"$sort": {"total_revenue": -1}}
+        {"$sort": {"total": -1}}
     ]
-    data = list(sales_collection.aggregate(pipeline))
-    labels = [row['_id'] for row in data]
-    values = [row['total_revenue'] for row in data]
-    return render_template('inventory/analytics.html', labels=labels, values=values, table_data=data)
+    cat_data = list(sales_collection.aggregate(cat_pipeline))
+    cat_labels = [d['_id'] or "Uncategorized" for d in cat_data]
+    cat_values = [d['total'] for d in cat_data]
+
+    # 2. Top 5 Products (Bar Chart)
+    prod_pipeline = [
+        {"$match": base_match},
+        {"$unwind": "$items_sold"},
+        {"$match": {"items_sold.type": "OUT", "items_sold.notes": {"$not": {"$regex": "Damage"}}}},
+        {"$group": {
+            "_id": "$items_sold.product_name",
+            "total": {"$sum": {"$multiply": ["$items_sold.quantity_sold", "$items_sold.price_per_unit"]}}
+        }},
+        {"$sort": {"total": -1}},
+        {"$limit": 5}
+    ]
+    prod_data = list(sales_collection.aggregate(prod_pipeline))
+    prod_labels = [d['_id'] for d in prod_data]
+    prod_values = [d['total'] for d in prod_data]
+
+    # 3. Daily Trend (Time Series Bar Chart)
+    trend_pipeline = [
+        {"$match": base_match},
+        {"$unwind": "$items_sold"},
+        {"$match": {"items_sold.type": "OUT", "items_sold.notes": {"$not": {"$regex": "Damage"}}}},
+        {"$group": {
+            "_id": { 
+                "year": {"$year": "$sale_date"},
+                "month": {"$month": "$sale_date"}, 
+                "day": {"$dayOfMonth": "$sale_date"}
+            },
+            "daily_revenue": {"$sum": {"$multiply": ["$items_sold.quantity_sold", "$items_sold.price_per_unit"]}}
+        }},
+        {"$sort": {"_id": 1}}
+    ]
+    trend_data = list(sales_collection.aggregate(trend_pipeline))
+    
+    # Format dates for labels (e.g., "Nov 23")
+    date_labels = []
+    date_values = []
+    for d in trend_data:
+        dt = datetime(d['_id']['year'], d['_id']['month'], d['_id']['day'])
+        date_labels.append(dt.strftime('%b %d'))
+        date_values.append(d['daily_revenue'])
+
+    return render_template(
+        'inventory/analytics.html',
+        filter_form=form,
+        start_date=start_date,
+        end_date=end_date,
+        # KPIs
+        total_revenue=net_revenue,
+        gross_sales=gross_sales,
+        total_units=total_units,
+        total_refunds=total_refunds,
+        total_loss=total_loss,
+        # Chart Data (Passed as Python lists, handled via |tojson in HTML)
+        cat_labels=cat_labels,
+        cat_values=cat_values,
+        prod_labels=prod_labels,
+        prod_values=prod_values,
+        date_labels=date_labels,
+        date_values=date_values
+    )
 
 # ==============================================================================
 # Admin Panel Routes
@@ -616,6 +854,77 @@ def delete_category(cat_id):
     categories_collection.delete_one({'_id': ObjectId(cat_id)})
     flash('Category deleted.', 'success')
     return redirect(url_for('manage_categories'))
+
+@app.route('/api/stock-movement-data')
+@login_required
+def stock_movement_data():
+    period = request.args.get('period', 'day')
+    now = datetime.now(timezone.utc)
+    
+    # 1. Define Time Range
+    if period == 'minute':
+        start_date = now - timedelta(hours=1) 
+        date_format = "%H:%M" 
+        group_id = { "year": {"$year": "$sale_date"}, "month": {"$month": "$sale_date"}, "day": {"$dayOfMonth": "$sale_date"}, "hour": {"$hour": "$sale_date"}, "minute": {"$minute": "$sale_date"}}
+    elif period == 'hour':
+        start_date = now - timedelta(hours=24)
+        date_format = "%H:00"
+        group_id = { "year": {"$year": "$sale_date"}, "month": {"$month": "$sale_date"}, "day": {"$dayOfMonth": "$sale_date"}, "hour": {"$hour": "$sale_date"}}
+    elif period == 'month':
+        start_date = now - timedelta(days=365)
+        date_format = "%Y-%m"
+        group_id = { "year": {"$year": "$sale_date"}, "month": {"$month": "$sale_date"}}
+    else: # Default: day
+        start_date = now - timedelta(days=30)
+        date_format = "%Y-%m-%d"
+        group_id = { "year": {"$year": "$sale_date"}, "month": {"$month": "$sale_date"}, "day": {"$dayOfMonth": "$sale_date"}}
+
+    # 2. Aggregation Pipeline
+    pipeline = [
+        {"$match": {"sale_date": {"$gte": start_date}}},
+        {"$unwind": "$items_sold"},
+        {"$group": {
+            "_id": { "time": group_id, "type": "$items_sold.type" },
+            "total_qty": {"$sum": "$items_sold.quantity_sold"}
+        }},
+        {"$sort": {"_id.time": 1}}
+    ]
+
+    data = list(sales_collection.aggregate(pipeline))
+
+    # 3. Format Data
+    def get_label(id_group):
+        y = id_group['year']
+        m = id_group['month']
+        d = id_group.get('day', 1)
+        h = id_group.get('hour', 0)
+        min_ = id_group.get('minute', 0)
+        return datetime(y, m, d, h, min_).strftime(date_format)
+
+    organized_data = {}
+    for entry in data:
+        label = get_label(entry['_id']['time'])
+        t_type = entry['_id']['type']
+        qty = entry['total_qty']
+        
+        if label not in organized_data:
+            organized_data[label] = {'IN': 0, 'OUT': 0}
+        organized_data[label][t_type] = qty
+
+    sorted_labels = sorted(organized_data.keys())
+    
+    # 4. Calculate NET Movement (IN - OUT)
+    # This creates the single line data points
+    dataset_net = []
+    for lbl in sorted_labels:
+        qty_in = organized_data[lbl]['IN']
+        qty_out = organized_data[lbl]['OUT']
+        dataset_net.append(qty_in - qty_out)
+
+    return jsonify({
+        'labels': sorted_labels,
+        'data': dataset_net
+    })
     
 # --- END NEW CATEGORY ROUTES ---
 

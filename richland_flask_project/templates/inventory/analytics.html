@@ -1,47 +1,230 @@
 {% extends "base.html" %}
-{% block title %}Business Analytics{% endblock %}
+
+{% block title %}Analytics{% endblock %}
+
 {% block content %}
-<h1 class="mb-4">Business Analytics</h1>
-<div class="row">
-    <div class="col-md-6">
-        <div class="card shadow mb-4">
-            <div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Revenue by Category</h6></div>
-            <div class="card-body"><canvas id="myPieChart"></canvas></div>
+<div class="container-fluid mb-5">
+    
+    <!-- Header & Filter -->
+    <div class="d-flex justify-content-between align-items-end mb-4">
+        <div>
+            <h2 class="fw-bold text-dark mb-1">Analytics Dashboard</h2>
+            <p class="text-muted small mb-0">
+                Performance from <strong>{{ start_date.strftime('%b %d, %Y') }}</strong> to <strong>{{ end_date.strftime('%b %d, %Y') }}</strong>
+            </p>
+        </div>
+        
+        <form method="get" class="d-flex align-items-end shadow-sm p-2 bg-white rounded border">
+            <div class="me-2">
+                <label class="small text-muted fw-bold">From</label>
+                {{ filter_form.start_date(class="form-control form-control-sm", type="date") }}
+            </div>
+            <div class="me-2">
+                <label class="small text-muted fw-bold">To</label>
+                {{ filter_form.end_date(class="form-control form-control-sm", type="date") }}
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary">
+                <i class="fas fa-filter me-1"></i> Filter
+            </button>
+        </form>
+    </div>
+
+    <!-- KPI CARDS -->
+    <div class="row g-4 mb-4">
+        <!-- Net Revenue -->
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-4 border-primary h-100">
+                <div class="card-body">
+                    <div class="text-muted small fw-bold text-uppercase">Net Revenue</div>
+                    <!-- Use Flask formatting for currency -->
+                    <div class="fs-3 fw-bold text-primary">₱{{ "{:,.2f}".format(total_revenue) }}</div>
+                    <small class="text-muted d-block mt-1">Gross Sales: ₱{{ "{:,.2f}".format(gross_sales) }}</small>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Units Sold -->
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-4 border-success h-100">
+                <div class="card-body">
+                    <div class="text-muted small fw-bold text-uppercase">Units Sold</div>
+                    <div class="fs-3 fw-bold text-dark">{{ "{:,.0f}".format(total_units) }}</div>
+                    <small class="text-muted d-block mt-1">Items moved</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Refunds -->
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-4 border-warning h-100">
+                <div class="card-body">
+                    <div class="text-muted small fw-bold text-uppercase">Refunds Given</div>
+                    <div class="fs-3 fw-bold text-warning">₱{{ "{:,.2f}".format(total_refunds) }}</div>
+                    <small class="text-muted d-block mt-1">Deducted from Gross</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Damages/Loss -->
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm border-start border-4 border-danger h-100">
+                <div class="card-body">
+                    <div class="text-muted small fw-bold text-uppercase">Loss / Damage</div>
+                    <div class="fs-3 fw-bold text-danger">₱{{ "{:,.2f}".format(total_loss) }}</div>
+                    <small class="text-muted d-block mt-1">Total value lost</small>
+                </div>
+            </div>
         </div>
     </div>
-    <div class="col-md-6">
-        <div class="card shadow mb-4">
-            <div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Performance Data</h6></div>
-            <div class="card-body">
-                <table class="table table-bordered">
-                    <thead><tr><th>Category</th><th>Units Sold</th><th>Revenue</th></tr></thead>
-                    <tbody>
-                        {% for row in table_data %}
-                        <tr>
-                            <td>{{ row._id }}</td>
-                            <td>{{ row.units_sold }}</td>
-                            <td>₱{{ "{:,.2f}".format(row.total_revenue) }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+
+    <!-- Charts Section -->
+    <div class="row g-4 mb-4">
+        <!-- Category Chart -->
+        <div class="col-lg-4">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-header bg-white py-3">
+                    <h6 class="m-0 fw-bold text-dark">Sales by Category</h6>
+                </div>
+                <div class="card-body d-flex align-items-center justify-content-center" style="height: 300px;">
+                    <canvas id="categoryChart"></canvas>
+                </div>
             </div>
+        </div>
+
+        <!-- Product Chart -->
+        <div class="col-lg-8">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-header bg-white py-3">
+                    <h6 class="m-0 fw-bold text-dark">Top 5 Best Selling Products</h6>
+                </div>
+                <div class="card-body" style="height: 300px;">
+                    <canvas id="productChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trend Chart -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3">
+            <h6 class="m-0 fw-bold text-dark">Daily Sales Trend</h6>
+        </div>
+        <div class="card-body" style="height: 350px;">
+            <canvas id="trendChart"></canvas>
         </div>
     </div>
 </div>
 {% endblock %}
+
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-var ctx = document.getElementById("myPieChart");
-var myPieChart = new Chart(ctx, {
-  type: 'doughnut',
-  data: {
-    labels: {{ labels|tojson }},
-    datasets: [{
-      data: {{ values|tojson }},
-      backgroundColor: ['#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b'],
-    }],
-  },
-});
+    // Global Chart Styling
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.color = '#6c757d';
+
+    document.addEventListener("DOMContentLoaded", function() {
+        
+        // --- 1. Category Chart (Doughnut) ---
+        // Use Jinja2 |tojson to safely inject Python lists into JS
+        const catLabels = {{ cat_labels|tojson }};
+        const catValues = {{ cat_values|tojson }};
+        
+        if (catLabels.length > 0) {
+            new Chart(document.getElementById("categoryChart"), {
+                type: 'doughnut',
+                data: {
+                    labels: catLabels,
+                    datasets: [{
+                        data: catValues,
+                        backgroundColor: ['#2799a5', '#2c3e50', '#f39c12', '#c0392b', '#95a5a6', '#63dcb9'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { position: 'right' },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let val = context.parsed;
+                                    return ' ₱' + val.toLocaleString(undefined, {minimumFractionDigits: 2});
+                                }
+                            }
+                        }
+                    },
+                    cutout: '70%'
+                }
+            });
+        } else {
+            // Fallback if no data
+            document.getElementById("categoryChart").parentElement.innerHTML = "<p class='text-muted'>No data available for this period.</p>";
+        }
+
+        // --- 2. Top Products Chart (Horizontal Bar) ---
+        const prodLabels = {{ prod_labels|tojson }};
+        const prodValues = {{ prod_values|tojson }};
+
+        if (prodLabels.length > 0) {
+            new Chart(document.getElementById("productChart"), {
+                type: 'bar',
+                data: {
+                    labels: prodLabels,
+                    datasets: [{
+                        label: 'Revenue',
+                        data: prodValues,
+                        backgroundColor: '#2799a5',
+                        borderRadius: 4,
+                        barThickness: 25
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { grid: { display: false } }
+                    }
+                }
+            });
+        }
+
+        // --- 3. Daily Trend Chart (Vertical Bar) ---
+        const dateLabels = {{ date_labels|tojson }};
+        const dateValues = {{ date_values|tojson }};
+
+        if (dateLabels.length > 0) {
+            new Chart(document.getElementById("trendChart"), {
+                type: 'bar',
+                data: {
+                    labels: dateLabels,
+                    datasets: [{
+                        label: 'Daily Revenue',
+                        data: dateValues,
+                        backgroundColor: '#2c3e50',
+                        borderRadius: 4,
+                        barThickness: 'flex',
+                        maxBarThickness: 40
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#f8f9fa' },
+                            ticks: {
+                                callback: function(value) { return '₱' + value.toLocaleString(); }
+                            }
+                        },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+        }
+    });
 </script>
 {% endblock %}

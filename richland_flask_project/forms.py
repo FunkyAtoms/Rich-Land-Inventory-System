@@ -3,7 +3,7 @@ from flask_wtf import FlaskForm
 from wtforms import (StringField, PasswordField, SubmitField, DecimalField, 
                      IntegerField, SelectField, TextAreaField, FieldList, 
                      FormField, HiddenField, DateField)
-from wtforms.validators import DataRequired, NumberRange, Optional, Email, EqualTo # Added EqualTo
+from wtforms.validators import DataRequired, NumberRange, Optional, Email, EqualTo
 
 # ==============================================================================
 # Authentication Forms
@@ -16,7 +16,7 @@ class LoginForm(FlaskForm):
     submit = SubmitField('Login')
 
 # ==============================================================================
-# User Management Forms # New Section
+# User Management Forms
 # ==============================================================================
 
 class UserRegistrationForm(FlaskForm):
@@ -80,11 +80,8 @@ class SupplierForm(FlaskForm):
 
 class PurchaseOrderItemForm(FlaskForm):
     """Sub-form for a single item within a purchase order."""
-    
-    # Meta configuration to allow this form to be used dynamically in a list without strict CSRF per row
     class Meta:
         csrf = False
-
     product_sku = StringField('Product SKU', validators=[DataRequired()])
     quantity = IntegerField('Quantity', validators=[DataRequired(), NumberRange(min=1)])
 
@@ -106,10 +103,37 @@ class ProductFilterForm(FlaskForm):
     sort_by = SelectField('Sort By', choices=[('-date_created', 'Newest First'), ('date_created', 'Oldest First'), ('name', 'Name (A-Z)'), ('-name', 'Name (Z-A)')], validators=[Optional()])
     submit = SubmitField('Apply')
 
+class AnalyticsFilterForm(FlaskForm):
+    """Form for filtering analytics data by date range."""
+    start_date = DateField('Start Date', format='%Y-%m-%d', validators=[Optional()])
+    end_date = DateField('End Date', format='%Y-%m-%d', validators=[Optional()])
+    submit = SubmitField('Filter')
+
+# --- UPDATED CLASS ---
 class TransactionFilterForm(FlaskForm):
     """Form for filtering the transaction log."""
-    product = StringField('Filter by Product SKU', validators=[Optional()])
-    transaction_type = SelectField('Type', choices=[('', 'All Types'), ('IN', 'Stock In'), ('OUT', 'Stock Out')], validators=[Optional()])
+    product = StringField('Filter by Product SKU/Name', validators=[Optional()])
+    
+    transaction_type = SelectField('Type', choices=[
+        ('', 'All Types'), 
+        ('IN', 'Stock In'), 
+        ('OUT', 'Stock Out')
+    ], validators=[Optional()])
+    
+    transaction_reason = SelectField('Reason', choices=[
+        ('', 'All Reasons'),
+        ('SALE', 'Sale'),
+        ('PO', 'Purchase Order/Restock'),
+        ('INITIAL', 'Initial Stock'),
+        ('RETURN', 'Return/Refund'),
+        ('DAMAGE', 'Damage')
+    ], validators=[Optional()])
+
+    user = StringField('User', validators=[Optional()])
+
+    start_date = DateField('Start Date', format='%Y-%m-%d', validators=[Optional()])
+    end_date = DateField('End Date', format='%Y-%m-%d', validators=[Optional()])
+    
     submit = SubmitField('Apply')
 
 class ProductHistoryFilterForm(FlaskForm):
@@ -131,9 +155,6 @@ class POFilterForm(FlaskForm):
     status = SelectField('Status', choices=[('', 'All Statuses'), ('PENDING', 'Pending'), ('COMPLETED', 'Completed')], validators=[Optional()])
     submit = SubmitField('Apply Filters')
 
-    # --- forms.py ---
-
-# Add this new class at the bottom or with other Product forms
 class CategoryForm(FlaskForm):
     """Form to add a new category."""
     name = StringField('Category Name', validators=[DataRequired()])

@@ -1,73 +1,244 @@
 <!-- /templates/inventory/transaction_list.html -->
 {% extends "base.html" %}
 
-{% block title %}Transaction Log{% endblock %}
+{% block title %}Transaction Logs{% endblock %}
 
 {% block content %}
-    <h1 class="mb-4">Transaction Log</h1>
+<div class="container-fluid pb-5">
 
-    <!-- Filter Form (Simplified for this example) -->
-    <div class="accordion mb-4">
-        <div class="accordion-item">
-            <h2 class="accordion-header">
-                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFilter">
-                    <i class="fas fa-filter me-2"></i> Filter Transactions
-                </button>
-            </h2>
-            <div id="collapseFilter" class="accordion-collapse collapse">
-                <div class="accordion-body">
-                    <form method="get" action="{{ url_for('transaction_list') }}">
-                        <div class="row g-3">
-                            <div class="col-md-6">{{ filter_form.product.label(class="form-label") }} {{ filter_form.product(class="form-control") }}</div>
-                            <div class="col-md-3">{{ filter_form.transaction_type.label(class="form-label") }} {{ filter_form.transaction_type(class="form-select") }}</div>
+    <!-- 1. HEADER -->
+    <div class="d-flex justify-content-between align-items-end mb-4">
+        <div>
+            <h2 class="fw-bold text-dark mb-1">Transaction Logs</h2>
+            <p class="text-muted small mb-0">Audit trail of all stock movements, sales, and adjustments.</p>
+        </div>
+        <div>
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#filterPanel">
+                <i class="fas fa-filter me-2"></i>Toggle Filters
+            </button>
+        </div>
+    </div>
+
+    <!-- 2. FILTER TOOLBAR -->
+    <div class="collapse show" id="filterPanel">
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-body p-3 bg-white rounded-3">
+                <form method="get" action="{{ url_for('transaction_list') }}" class="row g-3 align-items-end">
+                    
+                    <!-- Product Search -->
+                    <div class="col-md-4 col-lg-3">
+                        {{ filter_form.product.label(class="form-label small fw-bold text-uppercase text-muted") }}
+                        {{ filter_form.product(class="form-control form-control-sm", placeholder="Search SKU or Name") }}
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="col-md-2">
+                        {{ filter_form.transaction_type.label(class="form-label small fw-bold text-uppercase text-muted") }}
+                        {{ filter_form.transaction_type(class="form-select form-select-sm") }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ filter_form.transaction_reason.label(class="form-label small fw-bold text-uppercase text-muted") }}
+                        {{ filter_form.transaction_reason(class="form-select form-select-sm") }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ filter_form.user.label(class="form-label small fw-bold text-uppercase text-muted") }}
+                        {{ filter_form.user(class="form-control form-control-sm", placeholder="Username") }}
+                    </div>
+
+                    <!-- Date Range -->
+                    <div class="col-md-3 col-lg-2">
+                        <label class="form-label small fw-bold text-uppercase text-muted">Date Range</label>
+                        <div class="input-group input-group-sm">
+                            {{ filter_form.start_date(class="form-control", placeholder="Start") }}
+                            {{ filter_form.end_date(class="form-control", placeholder="End") }}
                         </div>
-                        <div class="mt-3">
-                            <button class="btn btn-primary" type="submit"><i class="fas fa-search"></i> Apply</button>
-                            <a href="{{ url_for('transaction_list') }}" class="btn btn-secondary">Reset</a>
-                        </div>
-                    </form>
-                </div>
+                    </div>
+
+                    <!-- Buttons -->
+                    <div class="col-auto d-flex gap-2">
+                        <button type="submit" class="btn btn-primary btn-sm shadow-sm" title="Apply Filters">
+                            <i class="fas fa-filter"></i>
+                        </button>
+                        <a href="{{ url_for('transaction_list') }}" class="btn btn-light btn-sm border" title="Reset">
+                            <i class="fas fa-redo-alt text-muted"></i>
+                        </a>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 
-    <!-- Results Table -->
-    <div class="card">
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-sm table-striped table-hover align-middle">
-                    <thead>
-                        <tr>
-                            <th>Product</th>
-                            <th class="text-center">Type</th>
-                            <th class="text-center">Quantity</th>
-                            <th>User</th>
-                            <th>Timestamp</th>
-                            <th>Notes</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- INFO: Loop through each sale, then loop through the items inside it -->
-                        {% for transaction in transaction_list %}
-                            {% for item in transaction.items_sold %}
-                            <tr>
-                                <td><a href="{{ url_for('product_detail', sku=item.product_sku) }}">{{ item.product_name }}</a></td>
-                                <td class="text-center">
-                                    {% if item.type == 'IN' %}<span class="badge bg-success">Stock In</span>
-                                    {% else %}<span class="badge bg-danger">Stock Out</span>{% endif %}
-                                </td>
-                                <td class="text-center">{{ item.quantity_sold|intcomma }}</td>
-                                <td>{{ transaction.user_username or "N/A" }}</td>
-                                <td>{{ transaction.sale_date.strftime('%B %d, %Y, %I:%M %p') }}</td>
-                                <td>{{ item.notes or "" }}</td>
-                            </tr>
-                            {% endfor %}
-                        {% else %}
-                        <tr><td colspan="6" class="text-center py-4">No transactions found.</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+    <!-- 3. TRANSACTIONS TABLE -->
+    <div class="card border-0 shadow-sm overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light">
+                    <tr>
+                        <th class="ps-4 text-uppercase text-secondary small" style="width: 5%;">Type</th>
+                        <th class="text-uppercase text-secondary small" style="width: 15%;">Date</th>
+                        <th class="text-uppercase text-secondary small" style="width: 25%;">Product</th>
+                        <th class="text-uppercase text-secondary small" style="width: 15%;">Reason</th>
+                        <th class="text-center text-uppercase text-secondary small" style="width: 10%;">Qty</th>
+                        <th class="text-uppercase text-secondary small" style="width: 15%;">User</th>
+                        <th class="text-uppercase text-secondary small" style="width: 15%;">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white">
+                    <!-- Note: We loop directly through 'transaction_list' because app.py has already unwound the items -->
+                    {% for trans in transaction_list %}
+                    <tr>
+                        <!-- TYPE BADGE (IN/OUT Arrow) -->
+                        <td class="ps-4">
+                            {% if trans.type == 'IN' %}
+                                <div class="rounded-circle bg-success-subtle text-success d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;" title="Stock In">
+                                    <i class="fas fa-arrow-down"></i>
+                                </div>
+                            {% else %}
+                                <div class="rounded-circle bg-danger-subtle text-danger d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;" title="Stock Out">
+                                    <i class="fas fa-arrow-up"></i>
+                                </div>
+                            {% endif %}
+                        </td>
+
+                        <!-- DATE & TIME -->
+                        <td>
+                            <!-- Jinja2 Date Formatting -->
+                            <span class="fw-bold text-dark d-block">{{ trans.sale_date.strftime('%b %d, %Y') }}</span>
+                            <small class="text-muted">{{ trans.sale_date.strftime('%I:%M %p') }}</small>
+                        </td>
+
+                        <!-- PRODUCT -->
+                        <td>
+                            <a href="{{ url_for('product_detail', sku=trans.product_sku) }}" class="text-dark text-decoration-none fw-bold d-block">
+                                {{ trans.product_name }}
+                            </a>
+                            <small class="text-muted font-monospace">{{ trans.product_sku }}</small>
+                        </td>
+
+                        <!-- REASON (Auto-detect based on notes/type) -->
+                        <td>
+                            {% set notes_lower = trans.notes|default('')|lower %}
+                            
+                            {% if 'sale' in notes_lower or (trans.type == 'OUT' and 'damage' not in notes_lower) %}
+                                <span class="badge bg-success-subtle text-success border border-success rounded-pill px-2">Sale</span>
+                            {% elif 'initial' in notes_lower %}
+                                <span class="badge bg-secondary-subtle text-secondary border border-secondary rounded-pill px-2">Initial</span>
+                            {% elif 'return' in notes_lower or 'refund' in notes_lower %}
+                                <span class="badge bg-primary-subtle text-primary border border-primary rounded-pill px-2">Return</span>
+                            {% elif 'damage' in notes_lower %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger rounded-pill px-2">Damage</span>
+                            {% elif 'purchase' in notes_lower or 'po' in notes_lower or 'restock' in notes_lower %}
+                                <span class="badge bg-info-subtle text-info border border-info rounded-pill px-2 text-dark">Restock</span>
+                            {% else %}
+                                <span class="badge bg-light text-dark border rounded-pill px-2">{{ trans.type }}</span>
+                            {% endif %}
+                        </td>
+
+                        <!-- QUANTITY -->
+                        <td class="text-center">
+                            <span class="fw-bold font-monospace fs-6 {% if trans.type == 'IN' %}text-success{% else %}text-danger{% endif %}">
+                                {% if trans.type == 'IN' %}+{% else %}-{% endif %}{{ trans.quantity_sold }}
+                            </span>
+                        </td>
+
+                        <!-- USER -->
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="rounded-circle bg-light text-secondary d-flex align-items-center justify-content-center me-2 border" style="width: 28px; height: 28px; font-size: 12px;">
+                                    <!-- Get first letter of username -->
+                                    {{ trans.user_username[:1]|upper }}
+                                </div>
+                                <span class="small text-dark">{{ trans.user_username }}</span>
+                            </div>
+                        </td>
+
+                        <!-- NOTES -->
+                        <td>
+                            {% if trans.notes %}
+                                <span class="d-inline-block text-truncate text-muted small" style="max-width: 180px;" title="{{ trans.notes }}">
+                                    {{ trans.notes }}
+                                </span>
+                            {% else %}
+                                <span class="text-muted small">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center py-5">
+                            <div class="text-muted mb-2"><i class="fas fa-search fa-2x opacity-25"></i></div>
+                            <p class="text-muted fw-medium">No transactions found matching your criteria.</p>
+                            <a href="{{ url_for('transaction_list') }}" class="btn btn-sm btn-outline-primary">Clear Filters</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
+
+    <!-- 4. PAGINATION -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Page navigation" class="mt-5">
+        <ul class="pagination justify-content-center shadow-sm">
+            
+            <!-- Previous Button -->
+            <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('transaction_list', page=current_page-1, **request.args.to_dict(flat=True)|dict_exclude('page')) }}">
+                    <span>&laquo;</span>
+                </a>
+            </li>
+
+            <!-- Page Numbers -->
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == 1 or p == total_pages or (p >= current_page - 2 and p <= current_page + 2) %}
+                    <li class="page-item {% if p == current_page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('transaction_list', page=p, **request.args.to_dict(flat=True)|dict_exclude('page')) }}">{{ p }}</a>
+                    </li>
+                {% elif p == current_page - 3 or p == current_page + 3 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
+            {% endfor %}
+
+            <!-- Next Button -->
+            <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('transaction_list', page=current_page+1, **request.args.to_dict(flat=True)|dict_exclude('page')) }}">
+                    <span>&raquo;</span>
+                </a>
+            </li>
+
+        </ul>
+        <div class="text-center text-muted small mt-2">
+            Page {{ current_page }} of {{ total_pages }}
+        </div>
+    </nav>
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const filterPanel = document.getElementById('filterPanel');
+        const storageKey = 'flask_transaction_log_filter_state';
+
+        // 1. Restore State on Load
+        const savedState = localStorage.getItem(storageKey);
+        if (savedState === 'hidden') {
+            filterPanel.classList.remove('show');
+        } else {
+            filterPanel.classList.add('show');
+        }
+
+        // 2. Save State on Toggle
+        filterPanel.addEventListener('hidden.bs.collapse', function () {
+            localStorage.setItem(storageKey, 'hidden');
+        });
+
+        filterPanel.addEventListener('shown.bs.collapse', function () {
+            localStorage.setItem(storageKey, 'shown');
+        });
+    });
+</script>
 {% endblock %}

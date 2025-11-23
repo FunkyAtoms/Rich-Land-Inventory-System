@@ -1,94 +1,339 @@
-<!-- /templates/home.html -->
 {% extends "base.html" %}
 
 {% block title %}Dashboard{% endblock %}
 
 {% block content %}
+    <!-- CUSTOM STYLES FOR DASHBOARD (If not already in base.html) -->
+    <style>
+        .hover-shadow:hover { transform: translateY(-5px); box-shadow: 0 1rem 3rem rgba(0,0,0,.175)!important; }
+        .transition-all { transition: all 0.3s ease-in-out; }
+        .bg-success-subtle { background-color: #d1e7dd; color: #0f5132; }
+        .bg-secondary-subtle { background-color: #e2e3e5; color: #41464b; }
+        /* Chart.js Legend Fix */
+        canvas { max-width: 100%; }
+    </style>
+
+    <!-- 1. DASHBOARD HEADER -->
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1>Dashboard</h1>
-        <p class="lead mb-0">Welcome back, {{ current_user.username }}!</p>
+        <div>
+            <h2 class="fw-bold text-dark mb-0">Dashboard Overview</h2>
+            <p class="text-muted small mb-0">Real-time insights and inventory status</p>
+        </div>
+        <div class="text-end">
+            <span class="badge bg-light text-dark border px-3 py-2 fw-normal shadow-sm">
+                <i class="far fa-calendar-alt me-2"></i> 
+                <span id="currentDate"></span>
+            </span>
+        </div>
     </div>
 
-    <!-- Low Stock Alerts Section -->
-    {% if low_stock_products %}
-    <div class="alert alert-danger" role="alert">
-        <h4 class="alert-heading"><i class="fas fa-exclamation-triangle me-2"></i>Low Stock Alert!</h4>
-        <p>The following {{ low_stock_products_count }} item(s) are at or below their reorder level:</p>
-        <hr>
-        <ul class="mb-0">
-            {% for product in low_stock_products %}
-            <li>
-                <a href="{{ url_for('product_detail', sku=product._id) }}" class="alert-link fw-bold">{{ product.name }}</a> -
-                Current Stock: <strong>{{ product.quantity|intcomma }}</strong> (Reorder Level is {{ product.reorder_level|intcomma }})
-            </li>
-            {% endfor %}
-        </ul>
+    <!-- 2. ALERTS SECTION (Logic adapted for Flask) -->
+    <!-- We separate the low_stock_products list into two groups here -->
+    {% set out_of_stock_list = [] %}
+    {% set low_stock_list = [] %}
+    {% for p in low_stock_products %}
+        {% if p.quantity == 0 %}
+            {% set _ = out_of_stock_list.append(p) %}
+        {% else %}
+            {% set _ = low_stock_list.append(p) %}
+        {% endif %}
+    {% endfor %}
+
+    {% if out_of_stock_list or low_stock_list %}
+    <div class="row g-3 mb-4">
+        
+        <!-- A. OUT OF STOCK ALERT (RED) -->
+        {% if out_of_stock_list %}
+        <div class="col-md-{% if low_stock_list %}6{% else %}12{% endif %}">
+            <div class="alert alert-danger border-0 shadow-sm d-flex align-items-center p-3 m-0 h-100">
+                <div class="fs-3 me-3 text-danger"><i class="fas fa-times-circle"></i></div>
+                <div>
+                    <div class="fw-bold text-danger">Out of Stock Alert</div>
+                    <div class="small text-dark">
+                        <strong>{{ out_of_stock_list|length }}</strong> item(s) have hit 0 quantity.
+                        <a href="{{ url_for('product_list', stock_status='out_of_stock') }}" class="text-danger fw-bold text-decoration-underline ms-1">View List</a>.
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- B. LOW STOCK WARNING (AMBER) -->
+        {% if low_stock_list %}
+        <div class="col-md-{% if out_of_stock_list %}6{% else %}12{% endif %}">
+            <div class="alert alert-warning border-0 shadow-sm d-flex align-items-center p-3 m-0 h-100">
+                <div class="fs-3 me-3 text-warning"><i class="fas fa-exclamation-triangle"></i></div>
+                <div>
+                    <div class="fw-bold text-warning-emphasis" style="color: #d35400 !important;">Low Stock Warning</div>
+                    <div class="small text-dark">
+                        <strong>{{ low_stock_list|length }}</strong> item(s) are running low.
+                        <a href="{{ url_for('product_list', stock_status='low_stock') }}" class="fw-bold text-decoration-underline ms-1" style="color: #d35400 !important;">View List</a>.
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
-    <!-- Metric Cards -->
-    <div class="row">
-        <div class="col-md-4 mb-4">
-            <div class="card text-white bg-primary h-100">
+    <!-- 3. KPI METRICS -->
+    <div class="row g-4 mb-4">
+        
+        <!-- Card 1: Total Products -->
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow transition-all">
                 <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-box-open me-2"></i>Total Active Products</h5>
-                    <p class="card-text fs-2 fw-bold">{{ total_products|intcomma }}</p>
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <p class="text-uppercase text-muted fw-bold small mb-1">Total Products</p>
+                            <h3 class="fw-bold text-dark mb-0">{{ total_products }}</h3>
+                        </div>
+                        <div class="bg-light rounded p-3 text-secondary">
+                            <i class="fas fa-cubes fa-lg"></i>
+                        </div>
+                    </div>
+                    <div class="mt-3 d-flex gap-2">
+                        <span class="badge bg-success-subtle border border-success-subtle rounded-pill px-2">
+                            Active Catalog
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="col-md-4 mb-4">
-            <div class="card text-white bg-success h-100">
+
+        <!-- Card 2: Inventory Value -->
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow transition-all">
                 <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-dollar-sign me-2"></i>Total Stock Value</h5>
-                    <p class="card-text fs-2 fw-bold">₱{{ "%.2f"|format(total_stock_value|float) }}</p>
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <p class="text-uppercase text-muted fw-bold small mb-1">Inventory Value</p>
+                            <h3 class="fw-bold text-dark mb-0">₱{{ "%.2f"|format(total_stock_value|float) }}</h3>
+                        </div>
+                        <div class="bg-light rounded p-3 text-primary">
+                            <i class="fas fa-wallet fa-lg"></i>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">Total asset value (Cost)</small>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="col-md-4 mb-4">
-            <div class="card text-white bg-warning h-100">
+
+        <!-- Card 3: Top Sales (Replaces Revenue since app.py doesn't have revenue calculated yet) -->
+        <div class="col-md-4">
+            <div class="card h-100 border-0 shadow-sm hover-shadow transition-all">
                 <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-chart-pie me-2"></i>Items with Low Stock</h5>
-                    <p class="card-text fs-2 fw-bold">{{ low_stock_products_count|intcomma }}</p>
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <p class="text-uppercase text-muted fw-bold small mb-1">Top Selling Item</p>
+                            {% if top_selling_items %}
+                                <h5 class="fw-bold text-dark mb-0 text-truncate" style="max-width: 150px;">{{ top_selling_items[0].product_name }}</h5>
+                                <small class="text-success fw-bold">{{ top_selling_items[0].total_quantity_sold }} Sold</small>
+                            {% else %}
+                                <h3 class="fw-bold text-dark mb-0">-</h3>
+                            {% endif %}
+                        </div>
+                        <div class="bg-light rounded p-3 text-success">
+                            <i class="fas fa-fire fa-lg"></i>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">Most popular item</small>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Recently Added & Top Sellers -->
+    <!-- 4. CHARTS & TABLES -->
     <div class="row">
-        <div class="col-lg-6 mb-4">
-            <div class="card h-100">
-                <div class="card-header"><h4><i class="fas fa-history me-2"></i>Recently Added Products</h4></div>
+        <!-- Stock Chart (Left) -->
+        <div class="col-lg-8 mb-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-white py-3 border-bottom-0 d-flex justify-content-between align-items-center">
+                    <h5 class="m-0 fw-bold text-dark">Stock Movement</h5>
+                    
+                    <!-- TIME FRAME TOGGLE BUTTONS -->
+                    <div class="btn-group" role="group" aria-label="Time frame">
+                        <button type="button" class="btn btn-sm btn-secondary active" onclick="loadChart('day', this)">Day</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadChart('hour', this)">Hour</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadChart('minute', this)">Minute</button>
+                    </div>
+                </div>
                 <div class="card-body">
-                    <ul class="list-group list-group-flush">
-                        {% for product in recent_products %}
-                        <li class="list-group-item">
-                            <a href="{{ url_for('product_detail', sku=product._id) }}">{{ product.name }}</a>
-                            <small class="text-muted d-block">Added on {{ product.date_created.strftime('%b %d, %Y') }}</small>
-                        </li>
-                        {% else %}
-                        <li class="list-group-item text-muted">No products have been added recently.</li>
-                        {% endfor %}
-                    </ul>
+                    <div style="height: 300px;">
+                        <canvas id="stockMovementChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="col-lg-6 mb-4">
-            <div class="card h-100">
-                <div class="card-header"><h4><i class="fas fa-fire-alt me-2 text-danger"></i>Top 5 Selling Items (By Quantity)</h4></div>
-                <div class="card-body">
-                    <ul class="list-group list-group-flush">
-                        {% for item in top_selling_items %}
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <a href="{{ url_for('product_detail', sku=item._id) }}">{{ item.product_name }}</a>
-                                <span class="badge bg-danger rounded-pill">{{ item.total_quantity_sold|intcomma }} units sold</span>
-                            </li>
-                        {% else %}
-                            <li class="list-group-item text-muted">No sales data available.</li>
-                        {% endfor %}
-                    </ul>
+        
+        <!-- Recent Products List (Right) -->
+        <div class="col-lg-4 mb-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-white py-3 border-bottom-0">
+                    <h5 class="m-0 fw-bold text-dark">Recently Added</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-4">Product</th>
+                                    <th class="text-end pe-4">Qty</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for product in recent_products %}
+                                <tr>
+                                    <td class="ps-4">
+                                        <a href="{{ url_for('product_detail', sku=product._id) }}" class="fw-semibold text-dark d-block text-truncate text-decoration-none" style="max-width: 150px;">
+                                            {{ product.name }}
+                                        </a>
+                                        <small class="text-muted font-monospace">{{ product._id }}</small>
+                                    </td>
+                                    <td class="text-end pe-4">
+                                        <span class="badge bg-light text-dark border">{{ product.quantity }}</span>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="2" class="text-center py-3 text-muted">No recent items.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer bg-white text-center border-top-0 pb-3">
+                    <a href="{{ url_for('product_list') }}" class="btn btn-sm btn-outline-secondary w-100">View All Products</a>
                 </div>
             </div>
         </div>
     </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    // 1. SET DATE HEADER
+    const dateOptions = { year: 'numeric', month: 'long', day: 'numeric' };
+    document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US', dateOptions);
+
+    let stockChartInstance = null;
+
+    document.addEventListener("DOMContentLoaded", function() {
+        const defaultBtn = document.querySelector("button[onclick*='day']");
+        loadChart('day', defaultBtn);
+    });
+
+    function loadChart(period, btnElement) {
+        // Update Buttons
+        if (btnElement) {
+            document.querySelectorAll('.btn-group .btn').forEach(b => {
+                b.classList.remove('active', 'btn-secondary');
+                b.classList.add('btn-outline-secondary');
+            });
+            btnElement.classList.remove('btn-outline-secondary');
+            btnElement.classList.add('active', 'btn-secondary');
+        }
+
+        // Fetch Data
+        fetch(`/api/stock-movement-data?period=${period}`)
+            .then(response => response.json())
+            .then(data => {
+                const ctx = document.getElementById('stockMovementChart').getContext('2d');
+
+                if (stockChartInstance) {
+                    stockChartInstance.destroy();
+                }
+
+                // Colors
+                const colorUp = '#27a562';      // Green Line
+                const colorDown = '#c0392b';    // Red Line
+                const colorDefault = '#2799a5'; // Teal Line (Neutral)
+                
+                // Single Light Teal Fill (Like the Old Chart)
+                const fillDefault = 'rgba(39, 153, 165, 0.1)'; 
+
+                // Render Chart
+                stockChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.labels,
+                        datasets: [{
+                            label: 'Net Stock Change',
+                            data: data.data,
+                            
+                            // *** THIS IS THE FIX ***
+                            backgroundColor: fillDefault, // Single color fill
+                            fill: 'start',                // Fills to the BOTTOM of the chart, not to 0
+                            
+                            tension: 0.4,
+                            borderWidth: 2,
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            pointBackgroundColor: '#fff',
+                            pointBorderWidth: 2,
+
+                            // Line Color Logic (Slope) - Keeps the Red/Green lines
+                            segment: {
+                                borderColor: ctx => {
+                                    if (!ctx.p0 || !ctx.p1) return colorDefault;
+                                    const start = ctx.p0.parsed.y;
+                                    const end = ctx.p1.parsed.y;
+                                    if (end >= start) return colorUp;
+                                    return colorDown;
+                                }
+                            },
+
+                            // Dot Border Color Logic
+                            pointBorderColor: ctx => {
+                                const index = ctx.dataIndex;
+                                const values = ctx.chart.data.datasets[0].data;
+                                if (index === 0) return colorDefault; 
+                                const current = values[index];
+                                const previous = values[index - 1];
+                                if (current >= previous) return colorUp;
+                                return colorDown;
+                            }
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                backgroundColor: '#2c3e50',
+                                padding: 10,
+                                callbacks: {
+                                    label: function(context) {
+                                        let val = context.parsed.y;
+                                        let prefix = val > 0 ? '+' : '';
+                                        return `Net Change: ${prefix}${val}`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                // Removed 'beginAtZero' so the chart scales naturally to negative numbers
+                                title: { display: true, text: 'Net Quantity' }
+                            },
+                            x: {
+                                grid: { display: false }
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(error => console.error('Error loading chart:', error));
+    }
+</script>
 {% endblock %}
